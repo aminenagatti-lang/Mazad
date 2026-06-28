@@ -1,51 +1,17 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import Image from "next/image";
 import { CountdownTimer } from "@/components/ui/countdown-timer";
 import Link from "next/link";
+import { getAllVehiclesClient, type VehicleWithAuction } from "@/lib/data/vehicles-client";
+import { getPublicUrl } from "@/lib/supabase/storage";
 
-const now = new Date();
-const auctions = [
-  {
-    id: 1,
-    slug: "renault-clio-iv-intens-2018",
-    name: "Renault Clio IV",
-    year: 2018,
-    location: "Tunis",
-    bid: "31 500",
-    endDate: new Date(now.getTime() + 1 * 24 * 60 * 60 * 1000 + 8 * 60 * 60 * 1000),
-  },
-  {
-    id: 2,
-    slug: "volkswagen-passat-carat-2020",
-    name: "Volkswagen Passat",
-    year: 2020,
-    location: "Ariana",
-    bid: "58 000",
-    endDate: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000),
-  },
-  {
-    id: 3,
-    slug: "ford-ranger-wildtrak-2021",
-    name: "Ford Ranger",
-    year: 2021,
-    location: "Sousse",
-    bid: "74 500",
-    endDate: new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000 + 6 * 60 * 60 * 1000),
-  },
-  {
-    id: 4,
-    slug: "hyundai-tucson-executive-2019",
-    name: "Hyundai Tucson",
-    year: 2019,
-    location: "Tunis",
-    bid: "46 800",
-    endDate: new Date(now.getTime() + 1 * 24 * 60 * 60 * 1000 + 22 * 60 * 60 * 1000),
-  },
-];
+function AuctionCard({ auction, index }: { auction: VehicleWithAuction; index: number }) {
+  const coverPhoto = auction.photos.find((p) => p.is_cover) ?? auction.photos[0];
+  const imageSrc = coverPhoto ? getPublicUrl("vehicle-photos", coverPhoto.storage_path) : "";
 
-function AuctionCard({ auction, index }: { auction: (typeof auctions)[0]; index: number }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -56,33 +22,40 @@ function AuctionCard({ auction, index }: { auction: (typeof auctions)[0]; index:
       className="flex w-full flex-col overflow-hidden rounded-xl bg-paper shadow-card transition-shadow lg:w-72 lg:shrink-0"
     >
       <Link href={`/encheres/${auction.slug}`} className="relative aspect-video bg-surface block">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={`/api/og?title=${encodeURIComponent(auction.name)}&price=${auction.bid.replace(/\s/g, "")}`}
-          alt={auction.name}
-          className="h-full w-full object-cover"
-        />
+        {imageSrc ? (
+          <Image
+            src={imageSrc}
+            alt={`${auction.marque} ${auction.modele}`}
+            fill
+            className="object-cover"
+            sizes="(max-width: 1024px) 50vw, 300px"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <span className="text-xs font-semibold uppercase tracking-widest text-ink-muted">PHOTO</span>
+          </div>
+        )}
       </Link>
       <div className="flex flex-1 flex-col p-4">
         <div className="flex items-baseline justify-between">
-          <h3 className="text-base font-bold text-ink font-heading">{auction.name}</h3>
-          <span className="text-sm font-medium text-ink-secondary">{auction.year}</span>
+          <h3 className="text-base font-bold text-ink font-heading">{auction.marque} {auction.modele}</h3>
+          <span className="text-sm font-medium text-ink-secondary">{auction.annee}</span>
         </div>
-        <p className="mt-1 text-xs text-ink-muted">{auction.location}</p>
+        <p className="mt-1 text-xs text-ink-muted">{auction.carburant} · {auction.transmission}</p>
         <div className="mt-4 flex items-end justify-between">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
               Enchère actuelle
             </p>
             <p className="mt-0.5 text-xl font-bold text-accent font-heading">
-              {auction.bid} DT
+              {(auction.current_price / 1000).toLocaleString("fr-FR")} DT
             </p>
           </div>
           <div className="text-right">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
               Temps restant
             </p>
-            <CountdownTimer endDate={auction.endDate} size="sm" />
+            <CountdownTimer endDate={new Date(auction.ends_at)} size="sm" />
           </div>
         </div>
         <Link
@@ -97,6 +70,20 @@ function AuctionCard({ auction, index }: { auction: (typeof auctions)[0]; index:
 }
 
 export function LiveAuctions() {
+  const [auctions, setAuctions] = useState<VehicleWithAuction[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAllVehiclesClient().then((data) => {
+      if (!cancelled) {
+        setAuctions(data.slice(0, 4));
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <section id="encheres" className="bg-paper py-20 lg:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
@@ -113,12 +100,26 @@ export function LiveAuctions() {
           </span>
         </div>
 
-        {/* 2-col grid on mobile, horizontal scroll on desktop */}
-        <div className="grid grid-cols-2 gap-5 lg:flex lg:overflow-x-auto lg:pb-4">
-          {auctions.map((auction, i) => (
-            <AuctionCard key={auction.id} auction={auction} index={i} />
-          ))}
-        </div>
+        {loading ? (
+          <div className="grid grid-cols-2 gap-5 lg:flex lg:overflow-x-auto lg:pb-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="animate-pulse w-full lg:w-72 lg:shrink-0 overflow-hidden rounded-xl">
+                <div className="aspect-video bg-gray-200" />
+                <div className="space-y-3 p-4">
+                  <div className="h-5 w-3/4 bg-gray-200 rounded" />
+                  <div className="h-4 w-1/2 bg-gray-200 rounded" />
+                  <div className="h-6 w-1/3 bg-gray-200 rounded" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-5 lg:flex lg:overflow-x-auto lg:pb-4">
+            {auctions.map((auction, i) => (
+              <AuctionCard key={auction.id} auction={auction} index={i} />
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

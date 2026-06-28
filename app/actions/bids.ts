@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
 
 const placeBidSchema = z.object({
@@ -27,8 +28,9 @@ export async function placeBid(input: { auctionId: string; amount: number }) {
       return { data: null, error: "Vous devez être connecté pour enchérir" };
     }
 
-    // 2. Verify KYC and wallet
-    const { data: profile, error: profileError } = await supabase
+    // 2. Verify KYC and wallet (admin client bypasses RLS recursion)
+    const admin = createAdminClient();
+    const { data: profile, error: profileError } = await admin
       .from("profiles")
       .select("kyc_status")
       .eq("id", user.id)

@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { z } from "zod";
 
 const vehicleSchema = z.object({
@@ -51,8 +52,9 @@ export async function createVehicle(input: Record<string, unknown>) {
       return { data: null, error: "Vous devez être connecté pour créer un véhicule" };
     }
 
-    // 2. Verify seller KYC
-    const { data: profile, error: profileError } = await supabase
+    // 2. Verify seller KYC (admin client bypasses RLS recursion)
+    const admin = createAdminClient();
+    const { data: profile, error: profileError } = await admin
       .from("profiles")
       .select("kyc_status, role")
       .eq("id", user.id)

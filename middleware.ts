@@ -1,5 +1,7 @@
+import "@/lib/supabase/suppress-warnings";
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next({ request });
@@ -10,6 +12,10 @@ export async function middleware(request: NextRequest) {
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+  response.headers.set(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; font-src 'self'; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+  );
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -29,9 +35,19 @@ export async function middleware(request: NextRequest) {
     }
   );
 
+  // CRITICAL: use getSession() instead of getUser()
+  // getSession() automatically refreshes the access token using the refresh token
+  // and updates the cookies in the response via setAll above.
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    console.error("Middleware auth error:", sessionError.message);
+  }
+
+  const user = session?.user ?? null;
 
   const path = request.nextUrl.pathname;
 
@@ -48,7 +64,9 @@ export async function middleware(request: NextRequest) {
     // If accessing admin routes without admin role (skip in test mode)
     if (path.startsWith("/dashboard/admin") && !isTestMode) {
       try {
-        const { data: profile } = await supabase
+        // Use admin client to bypass RLS infinite-recursion on profiles
+        const admin = createAdminClient();
+        const { data: profile } = await admin
           .from("profiles")
           .select("role")
           .eq("id", user!.id)
@@ -67,5 +85,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|api/).*)"],
 };

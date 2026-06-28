@@ -15,6 +15,52 @@ interface BidCardProps {
   onBidPlaced?: (amount: number) => void;
 }
 
+function BidConfirmModal({
+  open,
+  amount,
+  onConfirm,
+  onCancel,
+  placing,
+}: {
+  open: boolean;
+  amount: number;
+  onConfirm: () => void;
+  onCancel: () => void;
+  placing: boolean;
+}) {
+  if (!open) return null;
+  return (
+    <div data-testid="confirm-bid-modal" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-sm rounded-xl bg-paper p-6 shadow-2xl">
+        <h3 className="text-lg font-bold text-ink font-heading">Confirmer votre enchère</h3>
+        <p className="mt-2 text-sm text-ink-secondary">
+          Vous êtes sur le point d'enchérir{" "}
+          <span className="font-bold text-accent">
+            {(amount / 1000).toLocaleString("fr-FR")} DT
+          </span>
+          .
+        </p>
+        <div className="mt-6 flex gap-3">
+          <button
+            onClick={onCancel}
+            disabled={placing}
+            className="flex-1 rounded-md border border-line bg-paper px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-surface disabled:opacity-60"
+          >
+            Annuler
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={placing}
+            className="flex-1 rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent-dark disabled:opacity-60"
+          >
+            {placing ? "Validation..." : "Confirmer"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function BidCard({ auction, currentUser, onBidPlaced }: BidCardProps) {
   const [bidInput, setBidInput] = useState((auction.current_price / 1000 + 200).toString());
   const [currentPrice, setCurrentPrice] = useState(auction.current_price);
@@ -22,6 +68,11 @@ export function BidCard({ auction, currentUser, onBidPlaced }: BidCardProps) {
   const [placing, setPlacing] = useState(false);
   const [watching, setWatching] = useState(false);
   const [testMode, setTestMode] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{ open: boolean; amount: number; onConfirm: () => void }>({
+    open: false,
+    amount: 0,
+    onConfirm: () => {},
+  });
 
   useEffect(() => {
     setTestMode(isTestMode());
@@ -48,21 +99,11 @@ export function BidCard({ auction, currentUser, onBidPlaced }: BidCardProps) {
     return () => { supabase.removeChannel(channel); };
   }, [auction.id]);
 
-  const handlePlaceBid = useCallback(async () => {
-    if (!currentUser && !testMode) {
-      toast.error("Vous devez être connecté pour enchérir");
-      return;
-    }
-    const amount = parseInt(bidInput.replace(/\s/g, ""), 10) * 1000;
-    if (isNaN(amount) || amount < minBid) {
-      toast.error(`L'enchère minimum est de ${(minBid / 1000).toLocaleString("fr-FR")} DT`);
-      return;
-    }
-
+  const executeBid = useCallback(async (amount: number) => {
     setPlacing(true);
 
     if (testMode) {
-      toast.success("Enchère placée (mode test) !");
+      toast.success(`Enchère placée (mode test) !`);
       setCurrentPrice(amount);
       setBidCount((c) => c + 1);
       setBidInput((amount / 1000 + 200).toString());
@@ -83,44 +124,44 @@ export function BidCard({ auction, currentUser, onBidPlaced }: BidCardProps) {
       onBidPlaced?.(amount);
     }
     setPlacing(false);
-  }, [auction.id, bidInput, currentUser, minBid, testMode, onBidPlaced]);
+  }, [auction.id, testMode, onBidPlaced]);
 
-  const handleQuickBid = useCallback(async () => {
+  const promptConfirm = useCallback((amount: number, label?: string) => {
     if (!currentUser && !testMode) {
       toast.error("Vous devez être connecté pour enchérir");
       return;
     }
-    const amount = currentPrice + 200 * 1000;
     if (isEnded) {
       toast.error("L'enchère est terminée");
       return;
     }
-
-    setPlacing(true);
-
-    if (testMode) {
-      toast.success(`+200 DT — Enchère placée (mode test) !`);
-      setCurrentPrice(amount);
-      setBidCount((c) => c + 1);
-      setBidInput((amount / 1000 + 200).toString());
-      onBidPlaced?.(amount);
-      setPlacing(false);
+    if (amount < minBid) {
+      toast.error(`L'enchère minimum est de ${(minBid / 1000).toLocaleString("fr-FR")} DT`);
       return;
     }
+    setConfirmModal({
+      open: true,
+      amount,
+      onConfirm: async () => {
+        setConfirmModal((prev) => ({ ...prev, open: false }));
+        await executeBid(amount);
+      },
+    });
+  }, [currentUser, testMode, isEnded, minBid, executeBid]);
 
-    const result = await placeBid({ auctionId: auction.id, amount });
-
-    if (result.error) {
-      toast.error(result.error);
-    } else {
-      toast.success("+200 DT — Enchère placée !");
-      setCurrentPrice(amount);
-      setBidCount((c) => c + 1);
-      setBidInput((amount / 1000 + 200).toString());
-      onBidPlaced?.(amount);
+  const handlePlaceBid = useCallback(() => {
+    const amount = parseInt(bidInput.replace(/\s/g, ""), 10) * 1000;
+    if (isNaN(amount)) {
+      toast.error("Montant invalide");
+      return;
     }
-    setPlacing(false);
-  }, [auction.id, currentPrice, currentUser, isEnded, testMode, onBidPlaced]);
+    promptConfirm(amount);
+  }, [bidInput, promptConfirm]);
+
+  const handleQuickBid = useCallback((increment: number) => {
+    const amount = currentPrice + increment * 1000;
+    promptConfirm(amount, `+${increment} DT`);
+  }, [currentPrice, promptConfirm]);
 
   const state = testMode
     ? isEnded
@@ -168,12 +209,18 @@ export function BidCard({ auction, currentUser, onBidPlaced }: BidCardProps) {
             </div>
             <p className="mt-1.5 text-xs text-ink-muted">Enchère minimum : {(minBid / 1000).toLocaleString("fr-FR")} DT</p>
           </div>
-          <div className="mt-5 flex items-center gap-3">
-            <button onClick={handlePlaceBid} disabled={placing} data-testid="bid-submit" className="flex flex-1 min-h-12 items-center justify-center rounded-md bg-accent px-4 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-accent-dark disabled:opacity-60">
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <button onClick={handlePlaceBid} disabled={placing} data-testid="bid-submit" className="col-span-2 flex min-h-12 items-center justify-center rounded-md bg-accent px-4 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-accent-dark disabled:opacity-60">
               {placing ? "En cours..." : testMode ? "Enchérir (mode test)" : "Enchérir maintenant"}
             </button>
-            <button onClick={handleQuickBid} disabled={placing} data-testid="bid-quick-200" className="flex flex-1 min-h-12 items-center justify-center rounded-md border-2 border-accent bg-white px-4 py-3.5 text-sm font-bold text-accent transition-colors hover:bg-accent-tint disabled:opacity-60">
+            <button onClick={() => handleQuickBid(200)} disabled={placing} data-testid="bid-quick-200" className="flex min-h-12 items-center justify-center rounded-md border-2 border-accent bg-white px-4 py-3.5 text-sm font-bold text-accent transition-colors hover:bg-accent-tint disabled:opacity-60">
               +200 DT
+            </button>
+            <button onClick={() => handleQuickBid(500)} disabled={placing} data-testid="bid-quick-500" className="flex min-h-12 items-center justify-center rounded-md border-2 border-accent bg-white px-4 py-3.5 text-sm font-bold text-accent transition-colors hover:bg-accent-tint disabled:opacity-60">
+              +500 DT
+            </button>
+            <button onClick={() => handleQuickBid(1000)} disabled={placing} data-testid="bid-quick-1000" className="col-span-2 flex min-h-12 items-center justify-center rounded-md border-2 border-accent bg-white px-4 py-3.5 text-sm font-bold text-accent transition-colors hover:bg-accent-tint disabled:opacity-60">
+              +1 000 DT
             </button>
           </div>
         </>
@@ -198,8 +245,6 @@ export function BidCard({ auction, currentUser, onBidPlaced }: BidCardProps) {
         </div>
       )}
 
-
-
       {state === "ended" && (
         <div className="mt-5 rounded-lg bg-surface p-4 text-center">
           <p className="text-lg font-bold text-ink font-heading">Enchère terminée</p>
@@ -217,6 +262,14 @@ export function BidCard({ auction, currentUser, onBidPlaced }: BidCardProps) {
           Partager
         </button>
       </div>
+
+      <BidConfirmModal
+        open={confirmModal.open}
+        amount={confirmModal.amount}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal((prev) => ({ ...prev, open: false }))}
+        placing={placing}
+      />
     </div>
   );
 }

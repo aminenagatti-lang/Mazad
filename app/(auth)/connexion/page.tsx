@@ -50,9 +50,9 @@ export default function ConnexionPage() {
     }
 
     toast.success("Connecté avec succès !");
-    // Redirect based on role could be done here; for now go to dashboard root
-    router.push("/dashboard");
-    setSubmitting(false);
+    // Force a full page reload so the middleware re-runs with the new session cookie.
+    // router.push does a soft navigation that can miss cookies in Server Components.
+    window.location.href = "/dashboard";
   };
 
   return (

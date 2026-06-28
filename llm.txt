@@ -9,34 +9,36 @@ CI/CD: Vercel
 
 Architecture
 ------------
-- App Router (Next.js 16). 35 pages statiques + API routes dynamiques.
+- App Router (Next.js 16). 42 pages + API routes dynamiques.
 - `app/(marketing)/` — Landing page (Navbar, Hero, Live Auctions, How It Works, Trust, CTA, Footer)
-- `app/(auth)/` — Connexion, inscription (acheteur/vendeur), wizard 5 étapes, paiement empreinte 600 DT
+- `app/(auth)/` — Connexion, inscription (acheteur/vendeur), wizard 5 étapes
 - `app/encheres/` — Listing avec filtres, tri, pagination (client-side, URL search params)
-- `app/encheres/[slug]/` — Fiche véhicule (SSG, generateStaticParams), OG image dynamique, JSON-LD
-- `app/dashboard/` — Dashboards acheteur/vendeur/admin (données statiques/mockées en MVP, à connecter à Supabase en production)
+- `app/encheres/[slug]/` — Fiche véhicule (SSG), OG image dynamique, JSON-LD, photos, inspection, documents PDF
+- `app/dashboard/` — Dashboards acheteur/vendeur/admin connectés à Supabase
 - `app/api/og/` — Open Graph image dynamique 1200×630 PNG
 - `app/sitemap.ts`, `app/robots.ts` — SEO
+- API routes publiques: `/api/vehicles`, `/api/vehicles/[slug]` pour contourner RLS sur photos/documents/inspection
+- API routes admin: `/api/admin/stats`, `/api/admin/kyc-pending`, `/api/admin/users`
+- API route auth: `/api/me` pour récupérer le profil utilisateur
 
 Données
 -------
-- Mock fallback: `lib/data/mock-vehicles.ts` (10 véhicules complets avec inspections, photos, enchères, vendeurs).
-- Quand Supabase est configuré et seedé (001_initial_schema.sql + 002_seed_data.sql), les pages basculent automatiquement sur les vraies données.
+- 10 véhicules actifs en base avec 16 photos Supabase Storage, 10 PDF contrôle technique, 60 items d'inspection
+- 3 utilisateurs de test (admin, vendeur, acheteur) avec KYC vérifié et portefeuilles actifs
+- Commission acheteur 2% (min 200 DT), vendeur 0%. Caution 200 DT pour enchérir.
 
 Authentification & KYC
 ----------------------
 - Inscription: email/password via Supabase Auth.
 - KYC: upload CIN (recto/verso), selfie, RIB, patente/statuts selon type de compte.
 - Validation manuelle par admin (24-48h).
-- Empreinte bancaire 600 DT requise pour enchérir.
+- Caution bancaire 200 DT requise pour enchérir.
 
-Mode Test (E2E manuel)
------------------------
+Mode Test (E2E)
+----------------
 - Bouton "Mode Test" dans la navbar du landing page.
 - Active un cookie `__test_mode=true` + localStorage.
 - Bypass complet de l'authentification dans le middleware pour `/dashboard/*`.
-- Permet de tester les enchères, les dashboards, les profils sans login.
-- Bannière jaune persistante sur toutes les pages quand actif.
 - Peut être supprimé sur demande.
 
 Filtres enchères (URL search params)
@@ -54,24 +56,16 @@ SEO
 - Metadata root avec OG/Twitter/JSON-LD.
 - `generateMetadata` dynamique sur chaque fiche véhicule.
 - `/api/og` génère une image 1200×630 avec titre + prix.
-- Sitemap 14 URLs, robots.txt.
+- Sitemap dynamique depuis Supabase, robots.txt.
 - Structured data: Car + Organization schema.
-
-Edge Functions (Supabase)
--------------------------
-- `check-ending-auctions` — notifie les enquêteurs/watchers quand <1h restante.
-- `finalize-ended-auctions` — détermine gagnant/perdant, crée notifications.
-- Déclenchées par pg_cron toutes les 5 minutes.
 
 Production Hardening
 --------------------
 - Zod validation sur auth, vehicle, auction, bid.
-- Rate limiting placeholder (Upstash Redis, commenté — activer quand env vars configurées).
-- Security headers dans middleware (X-Frame-Options, HSTS, etc.).
+- Security headers dans middleware (X-Frame-Options, HSTS, CSP, etc.).
 - Validation uploads: MIME whitelist, 5MB max, magic bytes.
-- Sentry configs commentées (client/server/edge).
-- Error boundaries: `error.tsx`, `not-found.tsx`.
-- Playwright E2E: 4 spec files + helpers (commentés — décommenter après `npm install -D @playwright/test`).
+- Playwright E2E: 38 tests passants (landing, browsing, auth, dashboard, bidding, security, real login).
+- Build: 42 pages, 0 erreurs TypeScript.
 
 Conventions
 -----------
@@ -81,13 +75,11 @@ Conventions
 - Tout le texte en français, prix en DT (milliers).
 - `data-testid` sur les éléments critiques pour E2E.
 
-Suppressions demandées (en attente)
------------------------------------
-- Mode Test: à supprimer quand l'utilisateur le demande via un prochain prompt.
-
 Points d'attention connus
 -------------------------
-- Les dashboards (acheteur/vendeur/admin) contiennent actuellement des données statiques/mockées. Ce sont des placeholders UI pour le MVP. À connecter à Supabase en production.
-- React Email est remplacé par des templates HTML string (`lib/email/templates.ts`) car l'install a été interrompue dans cet environnement. Réinstaller `@react-email/components` et réactiver les imports dans `lib/resend/client.ts` pour revenir à React Email.
-- `date-fns` est remplacé par un helper `timeAgo()` custom (même raison).
+- RLS `profiles` : la policy `admin_all_profiles` provoque une récursion infinie. Contournement en place : toutes les requêtes `profiles` passent par le service role (`createAdminClient`) côté serveur, ou par des API routes (`/api/me`, `/api/admin/*`) pour le client.
+- Migration `011_fix_profiles_rls_recursion.sql` créée mais non appliquée (besoin d'accès psql/CLI Supabase).
+- Cron job `finalize-ended-auctions` tourne toutes les minutes en production. Pour les tests, les dates des enchères doivent être dans le futur.
+- React Email est remplacé par des templates HTML string (`lib/email/templates.ts`).
+- `date-fns` est remplacé par un helper `timeAgo()` custom.
 - Upstash rate limiting et Sentry sont des placeholders commentés.

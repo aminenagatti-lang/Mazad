@@ -1,5 +1,7 @@
+import "@/lib/supabase/suppress-warnings";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { redirect } from "next/navigation";
 
 export default async function DashboardRootPage() {
@@ -7,7 +9,9 @@ export default async function DashboardRootPage() {
   const testMode = cookieStore.get("__test_mode")?.value === "true";
 
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // Use getSession() to auto-refresh expired access tokens
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
 
   if (!user && !testMode) {
     redirect("/connexion");
@@ -18,7 +22,9 @@ export default async function DashboardRootPage() {
     redirect("/dashboard/acheteur");
   }
 
-  const { data: profile } = await supabase
+  // Use admin client to bypass RLS infinite-recursion on profiles
+  const admin = createAdminClient();
+  const { data: profile } = await admin
     .from("profiles")
     .select("role")
     .eq("id", user!.id)

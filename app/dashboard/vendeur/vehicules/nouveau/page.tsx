@@ -301,7 +301,7 @@ export default function AddVehiclePage() {
               <p className="text-xs text-ink-muted">L&apos;enchère se terminera le</p>
               <p className="text-sm font-semibold text-ink">{endDate.toLocaleString("fr-FR")}</p>
             </div>
-            <p className="text-xs text-ink-muted">Commission vendeur : 1.5% du prix d&apos;adjudication</p>
+            <p className="text-xs text-ink-muted">Commission acheteur : 2% (min 200 DT) — Vendeur : 0%</p>
           </>
         )}
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { cookies } from "next/headers";
 
 export async function GET(request: Request) {
@@ -56,8 +57,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ seller: null, vehicle: null }, { status: 403 });
     }
 
-    // Get seller info
-    const { data: seller } = await supabase
+    // Get seller info (admin client bypasses RLS recursion)
+    const admin = createAdminClient();
+    const { data: seller } = await admin
       .from("profiles")
       .select("first_name, last_name, phone, city, company_name")
       .eq("id", vehicle.seller_id)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
@@ -10,36 +10,33 @@ import { SortAndFilterBar } from "@/components/search/sort-and-filter-bar";
 import { ActiveFiltersBar } from "@/components/search/active-filters-bar";
 import { Pagination } from "@/components/search/pagination";
 import { EmptyState } from "@/components/search/empty-state";
-import { mockVehicles } from "@/lib/data/mock-vehicles";
+import { getAllVehiclesClient, type VehicleWithAuction } from "@/lib/data/vehicles-client";
 import { getPublicUrl } from "@/lib/supabase/storage";
 import Link from "next/link";
 
 const MotionLink = motion(Link);
 
-interface VehicleAuction {
-  id: string;
-  slug: string;
-  marque: string;
-  modele: string;
-  annee: number;
-  kilometrage: number;
-  carburant: string;
-  transmission: string;
-  couleur: string | null;
-  current_price: number;
-  bid_count: number;
-  ends_at: string;
-  status: string;
-}
-
 export default function EncheresPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const [vehicles, setVehicles] = useState<VehicleWithAuction[]>([]);
+  const [loading, setLoading] = useState(true);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   const page = Number(searchParams.get("page") || "1");
   const perPage = 12;
+
+  useEffect(() => {
+    let cancelled = false;
+    getAllVehiclesClient().then((data) => {
+      if (!cancelled) {
+        setVehicles(data);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const currentFilters = useMemo(() => {
     const f: Record<string, string> = {};
@@ -57,21 +54,7 @@ export default function EncheresPage() {
   const activeFilterCount = Object.keys(currentFilters).length;
 
   const filtered = useMemo(() => {
-    let data = mockVehicles.map((v) => ({
-      id: v.id,
-      slug: v.slug,
-      marque: v.marque,
-      modele: v.modele,
-      annee: v.annee,
-      kilometrage: v.kilometrage,
-      carburant: v.carburant,
-      transmission: v.transmission,
-      couleur: v.couleur,
-      current_price: v.auction.current_price,
-      bid_count: v.auction.bid_count,
-      ends_at: v.auction.ends_at,
-      status: v.status ?? "active",
-    }));
+    let data = [...vehicles];
 
     const norm = (s: string) =>
       s
@@ -102,18 +85,18 @@ export default function EncheresPage() {
         data.sort((a, b) => b.current_price - a.current_price);
         break;
       default:
-        data.sort((a, b) => Number(b.id) - Number(a.id));
+        data.sort((a, b) => new Date(b.ends_at).getTime() - new Date(a.ends_at).getTime());
     }
 
     return data;
-  }, [currentFilters, currentSort]);
+  }, [vehicles, currentFilters, currentSort]);
 
   const totalCount = filtered.length;
   const totalPages = Math.ceil(totalCount / perPage);
   const from = (page - 1) * perPage;
   const pageData = filtered.slice(from, from + perPage);
 
-  const uniqueMarques = Array.from(new Set(mockVehicles.map((v) => v.marque)));
+  const uniqueMarques = Array.from(new Set(vehicles.map((v) => v.marque)));
 
   const navigateWithFilters = (newFilters: Record<string, string>, newSort?: string, newPage?: number) => {
     const params = new URLSearchParams();
@@ -195,7 +178,20 @@ export default function EncheresPage() {
               }}
             />
 
-            {pageData.length === 0 ? (
+            {loading ? (
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="animate-pulse overflow-hidden rounded-xl border border-gray-100">
+                    <div className="aspect-video bg-gray-200" />
+                    <div className="space-y-3 p-4">
+                      <div className="h-5 w-3/4 bg-gray-200 rounded" />
+                      <div className="h-4 w-1/2 bg-gray-200 rounded" />
+                      <div className="h-6 w-1/3 bg-gray-200 rounded" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : pageData.length === 0 ? (
               <EmptyState onReset={() => navigateWithFilters({}, currentSort, 1)} />
             ) : (
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
@@ -205,11 +201,13 @@ export default function EncheresPage() {
               </div>
             )}
 
-            <Pagination
-              page={page}
-              totalPages={totalPages}
-              onPageChange={(p) => navigateWithFilters(currentFilters, currentSort, p)}
-            />
+            {!loading && totalPages > 1 && (
+              <Pagination
+                page={page}
+                totalPages={totalPages}
+                onPageChange={(p) => navigateWithFilters(currentFilters, currentSort, p)}
+              />
+            )}
           </div>
         </div>
       </main>
@@ -263,12 +261,10 @@ export default function EncheresPage() {
   );
 }
 
-function VehicleCard({ auction }: { auction: VehicleAuction }) {
+function VehicleCard({ auction }: { auction: VehicleWithAuction }) {
   const [imgError, setImgError] = useState(false);
 
-  // Try to find a photo from mock data
-  const mockVehicle = mockVehicles.find((v) => v.slug === auction.slug);
-  const coverPhoto = mockVehicle?.photos.find((p) => p.is_cover) ?? mockVehicle?.photos[0];
+  const coverPhoto = auction.photos.find((p) => p.is_cover) ?? auction.photos[0];
   const imageSrc = coverPhoto ? getPublicUrl("vehicle-photos", coverPhoto.storage_path) : "";
 
   return (

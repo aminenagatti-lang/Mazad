@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { isTestMode } from "@/lib/test-mode";
+import { supabase } from "@/lib/supabase/client";
 import {
   getCurrentUser,
   fetchBuyerStats,
@@ -39,14 +40,57 @@ export function useUser() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getCurrentUser().then((u) => {
-      setUser(u);
-      setLoading(false);
-      if (!u && !isTestMode()) {
-        router.push("/connexion");
-      }
-    });
-  }, [router]);
+    let mounted = true;
+
+    // Initial fetch
+    getCurrentUser()
+      .then((u) => {
+        if (!mounted) return;
+        setUser(u);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("[useUser] getCurrentUser failed:", err);
+        if (mounted) {
+          setLoading(false);
+        }
+      });
+
+    // Listen for auth state changes (login, logout, token refresh)
+    let subscription: { unsubscribe: () => void } | null = null;
+    try {
+      const result = supabase.auth.onAuthStateChange(
+        async (event, session) => {
+          if (!mounted) return;
+          if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+            try {
+              const u = await getCurrentUser();
+              if (mounted) {
+                setUser(u);
+                setLoading(false);
+              }
+            } catch (err) {
+              console.error("[useUser] onAuthStateChange getCurrentUser failed:", err);
+            }
+          } else if (event === "SIGNED_OUT") {
+            setUser(null);
+            setLoading(false);
+            if (!isTestMode()) {
+              window.location.href = "/connexion";
+            }
+          }
+        }
+      );
+      subscription = result.data?.subscription ?? null;
+    } catch (err) {
+      console.error("[useUser] onAuthStateChange setup failed:", err);
+    }
+
+    return () => {
+      mounted = false;
+      subscription?.unsubscribe();
+    };
+  }, []);
 
   return { user, loading };
 }

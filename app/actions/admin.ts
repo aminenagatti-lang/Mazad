@@ -1,8 +1,10 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
-async function requireAdmin(supabase: Awaited<ReturnType<typeof createClient>>) {
+async function requireAdmin() {
+  const supabase = await createClient();
   const {
     data: { user },
     error: authError,
@@ -12,7 +14,9 @@ async function requireAdmin(supabase: Awaited<ReturnType<typeof createClient>>) 
     throw new Error("Non authentifié");
   }
 
-  const { data: profile, error: profileError } = await supabase
+  // Use admin client to bypass RLS infinite-recursion on profiles
+  const admin = createAdminClient();
+  const { data: profile, error: profileError } = await admin
     .from("profiles")
     .select("role")
     .eq("id", user.id)
@@ -24,12 +28,11 @@ async function requireAdmin(supabase: Awaited<ReturnType<typeof createClient>>) 
 }
 
 export async function approveKyc(userId: string) {
-  const supabase = await createClient();
-
   try {
-    await requireAdmin(supabase);
+    await requireAdmin();
 
-    const { error } = await supabase
+    const admin = createAdminClient();
+    const { error } = await admin
       .from("profiles")
       .update({ kyc_status: "verified", kyc_verified_at: new Date().toISOString() })
       .eq("id", userId);
@@ -46,12 +49,11 @@ export async function approveKyc(userId: string) {
 }
 
 export async function rejectKyc(userId: string, reason: string) {
-  const supabase = await createClient();
-
   try {
-    await requireAdmin(supabase);
+    await requireAdmin();
 
-    const { error } = await supabase
+    const admin = createAdminClient();
+    const { error } = await admin
       .from("profiles")
       .update({ kyc_status: "rejected", kyc_rejection_reason: reason })
       .eq("id", userId);
@@ -71,7 +73,7 @@ export async function approveVehicle(vehicleId: string) {
   const supabase = await createClient();
 
   try {
-    await requireAdmin(supabase);
+    await requireAdmin();
 
     const { error: vehicleError } = await supabase
       .from("vehicles")

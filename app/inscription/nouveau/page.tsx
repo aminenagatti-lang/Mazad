@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { StepIndicator } from "@/components/ui/step-indicator";
 import { FileUploadZone } from "@/components/ui/file-upload-zone";
 import { supabase } from "@/lib/supabase/client";
+import { createProfile } from "@/app/actions/profile-create";
 import Link from "next/link";
 
 const steps = ["Rôle", "Profil", "Compte", "KYC", "Confirmation"];
@@ -129,8 +130,8 @@ export default function InscriptionNouveauPage() {
         deposit_paid_at: depositPaid ? new Date().toISOString() : null,
       };
 
-      const { error: profileError } = await supabase.from("profiles").insert(profilePayload);
-      if (profileError) {
+      const profileRes = await createProfile(profilePayload);
+      if (!profileRes.success) {
         toast.error("Erreur lors de la création du profil");
         setSubmitting(false);
         return;

@@ -1,6 +1,11 @@
 import { supabase } from "@/lib/supabase/client";
 import { isTestMode } from "@/lib/test-mode";
 import {
+  approveKyc as approveKycServer,
+  rejectKyc as rejectKycServer,
+} from "@/app/actions/admin";
+import { updateProfile as updateProfileServer } from "@/app/actions/profile";
+import {
   demoUser,
   demoBuyerStats,
   demoActiveBids,
@@ -52,6 +57,7 @@ interface SellerAuctionRow {
   marque: string | null;
   modele: string | null;
   annee: number | null;
+  prix_depart: number | null;
   auctions: { current_price: number; bid_count: number; ends_at: string; status: string } | null;
 }
 
@@ -219,35 +225,12 @@ function timeAgo(date: string): string {
 export async function getCurrentUser(): Promise<UserProfile | null> {
   if (isTestMode()) return demoUser;
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      if (isTestMode()) return demoUser;
-      return null;
-    }
-
-    const { data: profile, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-
-    if (error || !profile) return null;
-
-    return {
-      id: user.id,
-      email: user.email ?? "",
-      first_name: profile.first_name,
-      last_name: profile.last_name,
-      phone: profile.phone,
-      city: profile.city,
-      role: profile.role,
-      seller_type: profile.seller_type,
-      company_name: profile.company_name,
-      kyc_status: profile.kyc_status,
-      deposit_paid: profile.deposit_paid,
-      deposit_amount: profile.deposit_amount,
-      created_at: profile.created_at,
-    };
+    // Use the /api/me endpoint which uses the admin client to bypass
+    // the RLS infinite-recursion bug on the profiles table.
+    const res = await fetch("/api/me", { credentials: "include" });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { user: UserProfile | null };
+    return json.user;
   } catch {
     return null;
   }
@@ -266,7 +249,6 @@ export async function signOut() {
 /* ------------------------------------------------------------------ */
 
 export async function fetchBuyerStats(userId: string): Promise<BuyerStats> {
-  if (isTestMode()) return demoBuyerStats;
   if (isTestMode()) return demoBuyerStats;
   try {
     const now = new Date().toISOString();
@@ -308,7 +290,6 @@ export async function fetchBuyerStats(userId: string): Promise<BuyerStats> {
 
 export async function fetchActiveBids(userId: string): Promise<ActiveBid[]> {
   if (isTestMode()) return demoActiveBids;
-  if (isTestMode()) return demoActiveBids;
   try {
     const { data } = await supabase
       .from("bids")
@@ -333,7 +314,6 @@ export async function fetchActiveBids(userId: string): Promise<ActiveBid[]> {
 
 export async function fetchBidHistory(userId: string): Promise<BidHistoryItem[]> {
   if (isTestMode()) return demoBidHistory;
-  if (isTestMode()) return demoBidHistory;
   try {
     const { data } = await supabase
       .from("bids")
@@ -356,7 +336,6 @@ export async function fetchBidHistory(userId: string): Promise<BidHistoryItem[]>
 }
 
 export async function fetchWatchlist(userId: string): Promise<WatchlistItem[]> {
-  if (isTestMode()) return demoWatchlist;
   if (isTestMode()) return demoWatchlist;
   try {
     const { data } = await supabase
@@ -383,7 +362,6 @@ export async function fetchWatchlist(userId: string): Promise<WatchlistItem[]> {
 
 export async function fetchSellerStats(userId: string): Promise<SellerStats> {
   if (isTestMode()) return demoSellerStats;
-  if (isTestMode()) return demoSellerStats;
   try {
     const { data: active } = await supabase
       .from("vehicles")
@@ -409,11 +387,14 @@ export async function fetchSellerStats(userId: string): Promise<SellerStats> {
       return sum + auctionPrice;
     }, 0);
 
+    // Commission buyer 2% (min 200 DT) — seller pays nothing in this model
+    const commission = total > 0 ? Math.max(Math.round(total * 0.02), 200000) : 0;
+
     return {
       activeListings: active?.length ?? 0,
       soldVehicles: sold?.length ?? 0,
       totalRevenue: total,
-      totalCommission: Math.round(total * 0.015),
+      totalCommission: commission,
     };
   } catch {
     return { activeListings: 0, soldVehicles: 0, totalRevenue: 0, totalCommission: 0 };
@@ -422,11 +403,10 @@ export async function fetchSellerStats(userId: string): Promise<SellerStats> {
 
 export async function fetchSellerListings(userId: string): Promise<SellerListing[]> {
   if (isTestMode()) return demoSellerListings;
-  if (isTestMode()) return demoSellerListings;
   try {
     const { data } = await supabase
       .from("vehicles")
-      .select("id, marque, modele, annee, status, auctions(current_price, bid_count, ends_at, status)")
+      .select("id, marque, modele, annee, prix_depart, status, auctions(current_price, bid_count, ends_at, status)")
       .eq("seller_id", userId)
       .in("status", ["active", "sold"]);
 
@@ -436,7 +416,7 @@ export async function fetchSellerListings(userId: string): Promise<SellerListing
       return {
         id: v.id,
         vehicleName: `${v.marque ?? ""} ${v.modele ?? ""} ${v.annee ?? ""}`.trim(),
-        prixDepart: 0,
+        prixDepart: v.prix_depart ?? 0,
         currentBid: a?.current_price ?? 0,
         bidCount: a?.bid_count ?? 0,
         endsAt: a?.ends_at ?? new Date().toISOString(),
@@ -449,7 +429,6 @@ export async function fetchSellerListings(userId: string): Promise<SellerListing
 }
 
 export async function fetchSellerDrafts(userId: string): Promise<SellerDraft[]> {
-  if (isTestMode()) return demoSellerDrafts;
   if (isTestMode()) return demoSellerDrafts;
   try {
     const { data } = await supabase
@@ -472,7 +451,6 @@ export async function fetchSellerDrafts(userId: string): Promise<SellerDraft[]> 
 
 export async function fetchSellerSales(userId: string): Promise<SellerSale[]> {
   if (isTestMode()) return demoSellerSales;
-  if (isTestMode()) return demoSellerSales;
   try {
     const { data } = await supabase
       .from("vehicles")
@@ -484,7 +462,8 @@ export async function fetchSellerSales(userId: string): Promise<SellerSale[]> {
     return rows.map((v) => {
       const a = v.auctions;
       const price = a?.current_price ?? 0;
-      const commission = Math.round(price * 0.015);
+      // Commission buyer 2% (min 200 DT)
+      const commission = price > 0 ? Math.max(Math.round(price * 0.02), 200000) : 0;
       return {
         id: v.id ?? "",
         vehicleName: `${v.marque ?? ""} ${v.modele ?? ""} ${v.annee ?? ""}`.trim(),
@@ -506,32 +485,16 @@ export async function fetchSellerSales(userId: string): Promise<SellerSale[]> {
 
 export async function fetchAdminStats(): Promise<AdminStats> {
   if (isTestMode()) return demoAdminStats;
-  if (isTestMode()) return demoAdminStats;
   try {
-    const [{ count: totalUsers }, { count: buyers }, { count: sellers }, { count: kycPending }, { count: activeVehicles }, { count: activeAuctions }] = await Promise.all([
-      supabase.from("profiles").select("*", { count: "exact", head: true }),
-      supabase.from("profiles").select("*", { count: "exact", head: true }).eq("role", "buyer"),
-      supabase.from("profiles").select("*", { count: "exact", head: true }).eq("role", "seller"),
-      supabase.from("profiles").select("*", { count: "exact", head: true }).eq("kyc_status", "pending"),
-      supabase.from("vehicles").select("*", { count: "exact", head: true }).eq("status", "active"),
-      supabase.from("auctions").select("*", { count: "exact", head: true }).eq("status", "active"),
-    ]);
-
-    return {
-      totalUsers: totalUsers ?? 0,
-      buyers: buyers ?? 0,
-      sellers: sellers ?? 0,
-      kycPending: kycPending ?? 0,
-      activeVehicles: activeVehicles ?? 0,
-      activeAuctions: activeAuctions ?? 0,
-    };
+    const res = await fetch("/api/admin/stats", { credentials: "include" });
+    if (!res.ok) return { totalUsers: 0, buyers: 0, sellers: 0, kycPending: 0, activeVehicles: 0, activeAuctions: 0 };
+    return await res.json();
   } catch {
     return { totalUsers: 0, buyers: 0, sellers: 0, kycPending: 0, activeVehicles: 0, activeAuctions: 0 };
   }
 }
 
 export async function fetchAdminActivities(): Promise<AdminActivity[]> {
-  if (isTestMode()) return demoAdminActivities;
   if (isTestMode()) return demoAdminActivities;
   try {
     const { data } = await supabase
@@ -554,29 +517,25 @@ export async function fetchAdminActivities(): Promise<AdminActivity[]> {
 
 export async function fetchKycPending(): Promise<KycPendingUser[]> {
   if (isTestMode()) return demoKycPending;
-  if (isTestMode()) return demoKycPending;
   try {
-    const { data } = await supabase
-      .from("profiles")
-      .select("id, first_name, last_name, phone, city, role, company_name, seller_type, kyc_status, deposit_paid, deposit_amount, created_at, kyc_submitted_at")
-      .eq("kyc_status", "pending")
-      .order("kyc_submitted_at", { ascending: false });
-
-    return (data ?? []).map((p) => ({
-      id: p.id,
-      email: "", // email comes from auth.users, not profiles
-      first_name: p.first_name,
-      last_name: p.last_name,
-      phone: p.phone,
-      city: p.city,
-      role: p.role,
-      company_name: p.company_name,
-      seller_type: p.seller_type,
-      kyc_status: p.kyc_status,
-      deposit_paid: p.deposit_paid ?? false,
-      deposit_amount: p.deposit_amount,
-      created_at: p.created_at,
-      kyc_submitted_at: p.kyc_submitted_at,
+    const res = await fetch("/api/admin/kyc-pending", { credentials: "include" });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json.profiles ?? []).map((p: Record<string, unknown>) => ({
+      id: p.id as string,
+      email: "",
+      first_name: p.first_name as string | null,
+      last_name: p.last_name as string | null,
+      phone: p.phone as string | null,
+      city: p.city as string | null,
+      role: p.role as "buyer" | "seller" | "admin",
+      company_name: p.company_name as string | null,
+      seller_type: p.seller_type as string | null,
+      kyc_status: p.kyc_status as "pending" | "verified" | "rejected",
+      deposit_paid: (p.deposit_paid as boolean) ?? false,
+      deposit_amount: p.deposit_amount as number | null,
+      created_at: p.created_at as string,
+      kyc_submitted_at: p.kyc_submitted_at as string | null,
     }));
   } catch {
     return [];
@@ -585,13 +544,9 @@ export async function fetchKycPending(): Promise<KycPendingUser[]> {
 
 export async function approveKyc(userId: string) {
   if (isTestMode()) return { success: true, error: null };
-  if (isTestMode()) return { success: true, error: null };
   try {
-    const { error } = await supabase
-      .from("profiles")
-      .update({ kyc_status: "verified", kyc_verified_at: new Date().toISOString() })
-      .eq("id", userId);
-    return { success: !error, error: error?.message ?? null };
+    const result = await approveKycServer(userId);
+    return { success: !result.error, error: result.error ?? null };
   } catch {
     return { success: false, error: "Erreur serveur" };
   }
@@ -599,13 +554,9 @@ export async function approveKyc(userId: string) {
 
 export async function rejectKyc(userId: string, reason: string) {
   if (isTestMode()) return { success: true, error: null };
-  if (isTestMode()) return { success: true, error: null };
   try {
-    const { error } = await supabase
-      .from("profiles")
-      .update({ kyc_status: "rejected", kyc_rejection_reason: reason })
-      .eq("id", userId);
-    return { success: !error, error: error?.message ?? null };
+    const result = await rejectKycServer(userId, reason);
+    return { success: !result.error, error: result.error ?? null };
   } catch {
     return { success: false, error: "Erreur serveur" };
   }
@@ -617,13 +568,9 @@ export async function rejectKyc(userId: string, reason: string) {
 
 export async function updateProfile(userId: string, updates: Partial<UserProfile>) {
   if (isTestMode()) return { success: true, error: null };
-  if (isTestMode()) return { success: true, error: null };
   try {
-    // Strip email since it's not a column on profiles
-    const { email, ...safeUpdates } = updates;
-    void email;
-    const { error } = await supabase.from("profiles").update(safeUpdates).eq("id", userId);
-    return { success: !error, error: error?.message ?? null };
+    const result = await updateProfileServer(userId, updates as Record<string, unknown>);
+    return { success: result.success, error: result.error ?? null };
   } catch {
     return { success: false, error: "Erreur serveur" };
   }

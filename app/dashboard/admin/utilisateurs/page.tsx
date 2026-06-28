@@ -2,13 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { createBrowserClient } from "@supabase/ssr";
 import { isTestMode } from "@/lib/test-mode";
-
-const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 interface UserRow {
   id: string;
@@ -20,15 +14,6 @@ interface UserRow {
   created_at: string;
 }
 
-function isSupabaseReady() {
-  return (
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-    process.env.NEXT_PUBLIC_SUPABASE_URL !== "your-project-url" &&
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY &&
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY !== "your-anon-key"
-  );
-}
-
 export default function AdminUsersPage() {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"all" | "buyer" | "seller" | "admin">("all");
@@ -36,7 +21,7 @@ export default function AdminUsersPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isSupabaseReady() || isTestMode()) {
+    if (isTestMode()) {
       setUsers([
         { id: "1", email: "karim@email.com", first_name: "Karim", last_name: "Ben Ali", role: "buyer", kyc_status: "pending", created_at: "2025-01-15" },
         { id: "2", email: "contact@tunisie-location.tn", first_name: "Mohamed", last_name: "Khadhraoui", role: "seller", kyc_status: "verified", created_at: "2025-02-10" },
@@ -47,29 +32,24 @@ export default function AdminUsersPage() {
       return;
     }
 
-    // Note: profiles table does not have an email column.
-    // In production, fetch emails from auth.users via service role or join.
-    // For now we fetch profiles and supplement with client-side auth lookup if needed.
-    supabase
-      .from("profiles")
-      .select("id, first_name, last_name, role, kyc_status, created_at")
-      .order("created_at", { ascending: false })
-      .then(({ data, error }) => {
-        if (error) {
-          toast.error("Erreur de chargement des utilisateurs");
-          setLoading(false);
-          return;
-        }
-        const rows = (data ?? []).map((p) => ({
-          id: p.id,
-          email: "", // email not stored in profiles; would need service-role auth lookup
-          first_name: p.first_name,
-          last_name: p.last_name,
-          role: p.role,
-          kyc_status: p.kyc_status,
-          created_at: p.created_at,
+    fetch("/api/admin/users", { credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Erreur de chargement");
+        const json = await res.json();
+        const rows = (json.users ?? []).map((p: Record<string, unknown>) => ({
+          id: p.id as string,
+          email: "",
+          first_name: p.first_name as string | null,
+          last_name: p.last_name as string | null,
+          role: p.role as string,
+          kyc_status: p.kyc_status as string,
+          created_at: p.created_at as string,
         }));
         setUsers(rows);
+        setLoading(false);
+      })
+      .catch(() => {
+        toast.error("Erreur de chargement des utilisateurs");
         setLoading(false);
       });
   }, []);

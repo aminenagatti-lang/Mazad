@@ -1,9 +1,12 @@
 import type { NextConfig } from "next";
 
+import path from "path";
+
 const nextConfig: NextConfig = {
   turbopack: {
-    root: ".",
+    root: path.resolve(__dirname),
   },
+  outputFileTracingRoot: path.resolve(__dirname),
   images: {
     remotePatterns: [
       {
@@ -15,6 +18,11 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "*.supabase.co",
         pathname: "/storage/v1/object/sign/**",
+      },
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
+        pathname: "/**",
       },
     ],
     formats: ["image/avif", "image/webp"],
